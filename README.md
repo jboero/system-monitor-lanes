@@ -1,6 +1,6 @@
 # System Monitor Lanes
 
-A KDE Plasma 6 widget that brings back **classic separated-lane sparkline graphs** for CPU monitoring — one lane per core, with individual sparklines showing real-time utilization.
+A KDE Plasma 6 widget that brings back KDE 4/5's **classic separated-lane sparkline graphs** for CPU monitoring — one lane per core, with individual sparklines showing real-time utilization.
 
 Replaces Plasma 6's default stacked/rainbow CPU charts with a layout that lets you instantly see what every core and thread is doing.
 
