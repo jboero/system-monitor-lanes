@@ -6,6 +6,9 @@ Replaces Plasma 6's default stacked/rainbow CPU charts with a layout that lets y
 
 > Vibe coded with ❤️ by **John Boero** & **Claude**
 
+![monitor](https://github.com/user-attachments/assets/ac2fde60-a4a0-4f96-99c2-f6fd44d1bd2f)
+
+
 ## Features
 
 - **Per-core sparkline lanes** — every physical core and hyperthread gets its own horizontal lane with a scrolling history graph
