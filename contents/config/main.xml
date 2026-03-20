@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kcfg xmlns="http://www.kde.org/standards/kcfg/1.0"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.kde.org/standards/kcfg/1.0
+                          http://www.kde.org/standards/kcfg/1.0/kcfg.xsd">
+    <kcfgfile name=""/>
+    <group name="General">
+        <entry name="historySeconds" type="Int">
+            <default>60</default>
+        </entry>
+        <entry name="showLabels" type="Bool">
+            <default>true</default>
+        </entry>
+        <entry name="showValues" type="Bool">
+            <default>true</default>
+        </entry>
+        <entry name="pCoreColor" type="String">
+            <default>#4da6ff</default>
+        </entry>
+        <entry name="pCoreFill" type="String">
+            <default>#264d73</default>
+        </entry>
+        <entry name="threadColor" type="String">
+            <default>#5a8a5a</default>
+        </entry>
+        <entry name="threadFill" type="String">
+            <default>#2d4a2d</default>
+        </entry>
+        <entry name="hotColor" type="String">
+            <default>#ff4444</default>
+        </entry>
+        <entry name="hotThreshold" type="Int">
+            <default>80</default>
+        </entry>
+        <entry name="proportionalHeights" type="Bool">
+            <default>true</default>
+        </entry>
+        <entry name="freqWeightedUsage" type="Bool">
+            <default>true</default>
+        </entry>
+        <entry name="tempHeatmap" type="Bool">
+            <default>true</default>
+        </entry>
+        <entry name="title" type="String">
+            <default></default>
+        </entry>
+    </group>
+</kcfg>

@@ -1,0 +1,15 @@
+{
+    "KPlugin": {
+        "Id": "org.kde.plasma.systemmonitor.lanes",
+        "Name": "System Monitor Lanes",
+        "Description": "Classic separated-lane sparkline graphs with P/E-core awareness, frequency-weighted utilization, and temperature heatmap",
+        "Icon": "utilities-system-monitor",
+        "Authors": [{ "Name": "John Boero & Claude", "Email": "" }],
+        "Category": "System Information",
+        "License": "GPL-2.0-or-later",
+        "Version": "1.0.0",
+        "Website": "https://www.github.com/jboero/system-monitor-lanes"
+    },
+    "KPackageStructure": "Plasma/Applet",
+    "X-Plasma-API-Minimum-Version": "6.0"
+}
