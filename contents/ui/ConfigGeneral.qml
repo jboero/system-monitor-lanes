@@ -23,6 +23,7 @@ Item {
     property alias cfg_proportionalHeights: propHeightsCheckBox.checked
     property alias cfg_freqWeightedUsage: freqWeightedCheckBox.checked
     property alias cfg_tempHeatmap: tempHeatmapCheckBox.checked
+    property alias cfg_showFreqLine: showFreqLineCheckBox.checked
     property alias cfg_title: titleField.text
 
     // Default-value stubs (Plasma 6 sets these for reset)
@@ -38,6 +39,7 @@ Item {
     property var cfg_proportionalHeightsDefault
     property var cfg_freqWeightedUsageDefault
     property var cfg_tempHeatmapDefault
+    property var cfg_showFreqLineDefault
     property var cfg_titleDefault
 
     // -- XHR file access detection --
@@ -127,12 +129,18 @@ Item {
         QQC2.TextField {
             id: titleField
             Kirigami.FormData.label: i18n("Title (blank=auto):")
+            QQC2.ToolTip.text: i18n("Custom widget title. Leave empty to use the default \"CPU Load Monitor\".")
+            QQC2.ToolTip.visible: hovered
+            QQC2.ToolTip.delay: 500
         }
 
         QQC2.SpinBox {
             id: historySpinBox
             Kirigami.FormData.label: i18n("History (sec):")
             from: 10; to: 600; stepSize: 10
+            QQC2.ToolTip.text: i18n("How many seconds of history the sparkline graphs display. Longer values show more history but use more memory.")
+            QQC2.ToolTip.visible: hovered
+            QQC2.ToolTip.delay: 500
         }
 
         // ── Display ─────────────────────────────────────────
@@ -145,10 +153,16 @@ Item {
             id: showLabelsCheckBox
             Kirigami.FormData.label: i18n("Show:")
             text: i18n("Labels")
+            QQC2.ToolTip.text: i18n("Show core name and frequency labels overlaid on the left side of each lane.")
+            QQC2.ToolTip.visible: hovered
+            QQC2.ToolTip.delay: 500
         }
         QQC2.CheckBox {
             id: showValuesCheckBox
             text: i18n("Values")
+            QQC2.ToolTip.text: i18n("Show the current utilization percentage on the right side of each lane.")
+            QQC2.ToolTip.visible: hovered
+            QQC2.ToolTip.delay: 500
         }
 
         // ── CPU Features ────────────────────────────────────
@@ -160,19 +174,38 @@ Item {
         QQC2.CheckBox {
             id: propHeightsCheckBox
             text: i18n("Proportional lane heights (P vs E)")
+            QQC2.ToolTip.text: i18n("Give P-cores taller lanes than E-cores and LP-cores, reflecting their relative performance weight.")
+            QQC2.ToolTip.visible: hovered
+            QQC2.ToolTip.delay: 500
         }
         QQC2.CheckBox {
             id: freqWeightedCheckBox
             text: i18n("Frequency-weighted usage")
+            QQC2.ToolTip.text: i18n("Scale reported CPU usage by (current freq / max freq) so a core at 50% load but half clock speed shows ~25% effective throughput. Requires QML_XHR_ALLOW_FILE_READ=1.")
+            QQC2.ToolTip.visible: hovered
+            QQC2.ToolTip.delay: 500
         }
         QQC2.CheckBox {
             id: tempHeatmapCheckBox
             text: i18n("Temperature heatmap")
+            QQC2.ToolTip.text: i18n("Show a per-socket temperature sparkline lane with blue\u2192green\u2192red color gradient based on current temperature.")
+            QQC2.ToolTip.visible: hovered
+            QQC2.ToolTip.delay: 500
+        }
+        QQC2.CheckBox {
+            id: showFreqLineCheckBox
+            text: i18n("Show frequency line")
+            QQC2.ToolTip.text: i18n("Draw a subtle gray line in each CPU lane showing the current clock speed as a percentage of max frequency. Useful for visualizing turbo boost and throttling.")
+            QQC2.ToolTip.visible: hovered
+            QQC2.ToolTip.delay: 500
         }
         QQC2.SpinBox {
             id: hotThresholdSpinBox
             Kirigami.FormData.label: i18n("Hot threshold (\u00B0C):")
             from: 50; to: 110; stepSize: 5
+            QQC2.ToolTip.text: i18n("Temperature at which the heatmap color reaches full red. Adjust based on your CPU's thermal limits.")
+            QQC2.ToolTip.visible: hovered
+            QQC2.ToolTip.delay: 500
         }
 
         // ── Colors ──────────────────────────────────────────
@@ -187,6 +220,9 @@ Item {
             showAlphaChannel: false
             color: page.cfg_pCoreColor || "#4da6ff"
             onColorChanged: page.cfg_pCoreColor = color.toString()
+            QQC2.ToolTip.text: i18n("Sparkline stroke color for Performance cores.")
+            QQC2.ToolTip.visible: hovered
+            QQC2.ToolTip.delay: 500
         }
         KQControls.ColorButton {
             id: pCoreFillBtn
@@ -194,6 +230,9 @@ Item {
             showAlphaChannel: true
             color: page.cfg_pCoreFill || "#264d73"
             onColorChanged: page.cfg_pCoreFill = color.toString()
+            QQC2.ToolTip.text: i18n("Gradient fill color for the area under P-core sparklines.")
+            QQC2.ToolTip.visible: hovered
+            QQC2.ToolTip.delay: 500
         }
         KQControls.ColorButton {
             id: threadColorBtn
@@ -201,6 +240,9 @@ Item {
             showAlphaChannel: false
             color: page.cfg_threadColor || "#5a8a5a"
             onColorChanged: page.cfg_threadColor = color.toString()
+            QQC2.ToolTip.text: i18n("Sparkline stroke color for hyperthread sibling lanes.")
+            QQC2.ToolTip.visible: hovered
+            QQC2.ToolTip.delay: 500
         }
         KQControls.ColorButton {
             id: threadFillBtn
@@ -208,6 +250,9 @@ Item {
             showAlphaChannel: true
             color: page.cfg_threadFill || "#2d4a2d"
             onColorChanged: page.cfg_threadFill = color.toString()
+            QQC2.ToolTip.text: i18n("Gradient fill color for the area under hyperthread sparklines.")
+            QQC2.ToolTip.visible: hovered
+            QQC2.ToolTip.delay: 500
         }
         KQControls.ColorButton {
             id: hotColorBtn
@@ -215,6 +260,9 @@ Item {
             showAlphaChannel: false
             color: page.cfg_hotColor || "#ff4444"
             onColorChanged: page.cfg_hotColor = color.toString()
+            QQC2.ToolTip.text: i18n("Color used when temperature reaches the hot threshold.")
+            QQC2.ToolTip.visible: hovered
+            QQC2.ToolTip.delay: 500
         }
 
         // ── About ───────────────────────────────────────────

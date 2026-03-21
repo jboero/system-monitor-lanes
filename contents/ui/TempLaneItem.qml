@@ -108,19 +108,7 @@ Item {
         }
     }
 
-    // Label
-    PlasmaComponents.Label {
-        id: lbl
-        anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
-        anchors.leftMargin: 4
-        width: lane.showLabel ? 80 : 0; visible: lane.showLabel
-        verticalAlignment: Text.AlignVCenter
-        text: "CPU " + lane.socket + " Temp"
-        font.pixelSize: Math.max(8, Math.min(13, lane.height * 0.4))
-        font.bold: true; opacity: 0.85
-    }
-
-    // Value
+    // Value (outside sparkline, on the right)
     PlasmaComponents.Label {
         id: val
         anchors.right: parent.right; anchors.top: parent.top; anchors.bottom: parent.bottom
@@ -129,15 +117,15 @@ Item {
         verticalAlignment: Text.AlignVCenter; horizontalAlignment: Text.AlignRight
         text: lane.displayValue
         font.pixelSize: Math.max(8, Math.min(13, lane.height * 0.4))
-        opacity: 0.85
+        opacity: 0.85; z: 2
     }
 
-    // Sparkline with per-segment color
+    // Sparkline with per-segment color — full width behind label
     Canvas {
         id: spark
-        anchors.left: lbl.right; anchors.right: val.left
+        anchors.left: parent.left; anchors.right: val.left
         anchors.top: parent.top; anchors.bottom: parent.bottom
-        anchors.leftMargin: 2; anchors.rightMargin: 2
+        anchors.rightMargin: 2
 
         onWidthChanged: if (width > 0 && height > 0 && lane.history.length >= 2) requestPaint()
         onHeightChanged: if (width > 0 && height > 0 && lane.history.length >= 2) requestPaint()
@@ -189,6 +177,18 @@ Item {
                 ctx.stroke();
             }
         }
+    }
+
+    // Label overlaid on top of sparkline
+    PlasmaComponents.Label {
+        id: lbl
+        anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
+        anchors.leftMargin: 4
+        width: lane.showLabel ? implicitWidth + 4 : 0; visible: lane.showLabel
+        verticalAlignment: Text.AlignVCenter
+        text: "CPU " + lane.socket + " Temp"
+        font.pixelSize: Math.max(8, Math.min(13, lane.height * 0.4))
+        font.bold: true; opacity: 0.85; z: 2
     }
 
     // Bottom separator

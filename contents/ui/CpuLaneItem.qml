@@ -14,6 +14,7 @@ Item {
     property int maxSamples: 60
     property bool showLabel: true
     property bool showValue: true
+    property bool showFreqLine: false
     property int coreCount: 0
     property real totalWeight: 1
     property real availableHeight: 400
@@ -35,6 +36,7 @@ Item {
     property real lastRawValue: 0
 
     property var history: []
+    property var freqHistory: []  // frequency as % of max, for second line graph
     property real observedMax: 1
     property real historyPeak: 100  // peak value in current history window (for CPU >100% scaling)
     property string displayValue: ""
@@ -133,6 +135,16 @@ Item {
                 for (var i2 = 0; i2 < h.length; i2++) if (h[i2] > peak2) peak2 = h[i2];
                 lane.observedMax = lane.niceMax(peak2 * 1.1);
             }
+
+            // Sample frequency as percentage of max for the second line graph
+            if (lane.showFreqLine && cpuMode && maxMhz > 0) {
+                var freqPct = (curFreq / maxMhz) * 100;
+                var fh = lane.freqHistory.slice();
+                fh.push(freqPct);
+                if (fh.length > lane.maxSamples) fh.splice(0, fh.length - lane.maxSamples);
+                lane.freqHistory = fh;
+            }
+
             spark.requestPaint();
         }
     }
@@ -168,21 +180,7 @@ Item {
     }
 
     // -- Layout ---------------------------------------------------
-    PlasmaComponents.Label {
-        id: lbl
-        anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
-        anchors.leftMargin: 4
-        width: lane.showLabel ? 90 : 0; visible: lane.showLabel
-        verticalAlignment: Text.AlignVCenter
-        text: {
-            if (!cpuMode) return lane.label;
-            if (isHT) return "  HT" + (htIndex >= 0 ? htIndex : "");
-            return "Core" + lane.coreNum;
-        }
-        font.pixelSize: Math.max(7, Math.min(13, lane.height * 0.55))
-        elide: Text.ElideRight; opacity: lane.labelOpacity
-    }
-
+    // Value label on the right (outside the sparkline area)
     PlasmaComponents.Label {
         id: val
         anchors.right: parent.right; anchors.top: parent.top; anchors.bottom: parent.bottom
@@ -192,13 +190,15 @@ Item {
         text: lane.displayValue
         font.pixelSize: Math.max(7, Math.min(13, lane.height * 0.55))
         opacity: lane.labelOpacity
+        z: 2
     }
 
+    // Canvas spans full width behind labels for maximum graph area
     Canvas {
         id: spark
-        anchors.left: lbl.right; anchors.right: val.left
+        anchors.left: parent.left; anchors.right: val.left
         anchors.top: parent.top; anchors.bottom: parent.bottom
-        anchors.leftMargin: 2; anchors.rightMargin: 2
+        anchors.rightMargin: 2
 
         onWidthChanged: if (width > 0 && height > 0 && lane.history.length >= 2) requestPaint()
         onHeightChanged: if (width > 0 && height > 0 && lane.history.length >= 2) requestPaint()
@@ -260,7 +260,49 @@ Item {
             ctx.strokeStyle = lane.lineColor;
             ctx.lineWidth = (coreType === "P") ? 1.2 : 0.8;
             ctx.lineJoin = "round"; ctx.stroke();
+
+            // -- Frequency line (subtle gray, percentage of max) --
+            var fHist = lane.freqHistory;
+            if (lane.showFreqLine && cpuMode && fHist.length >= 2) {
+                var fOx = (samples - fHist.length) * dx;
+                ctx.beginPath();
+                for (var f = 0; f < fHist.length; f++) {
+                    var fpx = fOx + f * dx;
+                    // freqHistory is 0-100% of max freq; map to same Y scale as usage
+                    var fpy = h - (fHist[f] / eMax) * (h - 1);
+                    fpy = Math.max(0, fpy);
+                    if (f === 0) ctx.moveTo(fpx, fpy); else ctx.lineTo(fpx, fpy);
+                }
+                ctx.strokeStyle = "#888888";
+                ctx.globalAlpha = 0.4;
+                ctx.lineWidth = 0.8;
+                ctx.lineJoin = "round"; ctx.stroke();
+                ctx.globalAlpha = 1.0;
+            }
         }
+    }
+
+    // Core label overlaid on top of the sparkline
+    PlasmaComponents.Label {
+        id: lbl
+        anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
+        anchors.leftMargin: 4
+        width: lane.showLabel ? implicitWidth + 4 : 0; visible: lane.showLabel
+        verticalAlignment: Text.AlignVCenter
+        z: 2
+        text: {
+            if (!cpuMode) return lane.label;
+            var name = isHT ? ("  HT" + (htIndex >= 0 ? htIndex : ""))
+                            : ("Core" + lane.coreNum);
+            // Append current frequency when available
+            if (cpuMode && lane.curFreq > 0) {
+                var ghz = (lane.curFreq / 1000).toFixed(1);
+                name += " " + ghz + "GHz";
+            }
+            return name;
+        }
+        font.pixelSize: Math.max(7, Math.min(13, lane.height * 0.55))
+        elide: Text.ElideRight; opacity: lane.labelOpacity
     }
 
     Rectangle {
