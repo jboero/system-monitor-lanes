@@ -13,6 +13,7 @@ PlasmoidItem {
     readonly property bool showLabels: Plasmoid.configuration.showLabels !== false
     readonly property bool showValues: Plasmoid.configuration.showValues !== false
     readonly property bool showFreqLine: Plasmoid.configuration.showFreqLine === true
+    readonly property bool freqWeighted: Plasmoid.configuration.freqWeightedUsage !== false
     readonly property string customTitle: Plasmoid.configuration.title || ""
     readonly property int maxSamples: Math.max(2, historySeconds)
 
@@ -494,6 +495,7 @@ PlasmoidItem {
                 showLabel: root.showLabels
                 showValue: root.showValues
                 showFreqLine: root.showFreqLine
+                freqWeighted: root.freqWeighted
                 coreCount: root.coreCount
                 totalWeight: socketTotalWeight
                 availableHeight: socketAvailHeight

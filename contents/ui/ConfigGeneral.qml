@@ -46,6 +46,112 @@ Item {
     property bool xhrOk: false
     property bool xhrChecked: false
 
+    // -- Live frequency debug data --
+    // Tracks per-core: { sysMaxKhz, curFreq, minObserved, maxObserved }
+    property var freqCoreData: ({})
+
+    function refreshFreqDebug() {
+        var pending = 128 * 3;  // max_freq, cur_freq (scaling), cpuinfo_min_freq per CPU
+        var data = {};
+
+        function done() {
+            pending--;
+            if (pending > 0) return;
+
+            // Build grouped summary by core type (using same thresholds as main.qml)
+            var globalMax = 0;
+            for (var idx in data) {
+                if ((data[idx].sysMaxKhz || 0) > globalMax) globalMax = data[idx].sysMaxKhz;
+            }
+
+            // Merge with persistent observed min/max
+            var prev = page.freqCoreData;
+            for (var ci in data) {
+                var cur = data[ci].curKhz || 0;
+                if (!prev[ci]) prev[ci] = { minObs: cur > 0 ? cur : 999999999, maxObs: 0 };
+                if (cur > 0 && cur < prev[ci].minObs) prev[ci].minObs = cur;
+                if (cur > prev[ci].maxObs) prev[ci].maxObs = cur;
+                data[ci].minObs = prev[ci].minObs;
+                data[ci].maxObs = prev[ci].maxObs;
+            }
+            page.freqCoreData = prev;
+
+            // Group cores by type
+            var groups = { "P": [], "E": [], "LP": [] };
+            for (var c in data) {
+                var d = data[c];
+                var type = "P";
+                if (globalMax > 0) {
+                    var ratio = (d.sysMaxKhz || 0) / globalMax;
+                    if (ratio < 0.6) type = "LP";
+                    else if (ratio < 0.85) type = "E";
+                }
+                groups[type].push(d);
+            }
+
+            freqDebugModel.clear();
+            var typeOrder = ["P", "E", "LP"];
+            var typeNames = { "P": "P-cores", "E": "E-cores", "LP": "LP-cores" };
+            for (var t = 0; t < typeOrder.length; t++) {
+                var ty = typeOrder[t];
+                var cores = groups[ty];
+                if (cores.length === 0) continue;
+
+                // Aggregate ranges across cores in this group
+                var sysMin = 999999999, sysMax = 0;
+                var minMin = 999999999;
+                var curMin = 999999999, curMax = 0;
+                var obsMin = 999999999, obsMax = 0;
+                for (var j = 0; j < cores.length; j++) {
+                    var cc = cores[j];
+                    if (cc.sysMaxKhz > sysMax) sysMax = cc.sysMaxKhz;
+                    if (cc.sysMaxKhz > 0 && cc.sysMaxKhz < sysMin) sysMin = cc.sysMaxKhz;
+                    if (cc.sysMinKhz > 0 && cc.sysMinKhz < minMin) minMin = cc.sysMinKhz;
+                    if (cc.curKhz > 0 && cc.curKhz < curMin) curMin = cc.curKhz;
+                    if (cc.curKhz > curMax) curMax = cc.curKhz;
+                    if (cc.minObs > 0 && cc.minObs < obsMin) obsMin = cc.minObs;
+                    if (cc.maxObs > obsMax) obsMax = cc.maxObs;
+                }
+
+                function mhz(khz) { return (khz / 1000).toFixed(0); }
+
+                freqDebugModel.append({ line: typeNames[ty] + " (" + cores.length + " cores):" });
+                freqDebugModel.append({ line: "  sysfs max:     " + mhz(sysMax) + " MHz" });
+                if (minMin < 999999999)
+                    freqDebugModel.append({ line: "  sysfs min:     " + mhz(minMin) + " MHz" });
+                freqDebugModel.append({ line: "  current range: " + mhz(curMin) + " – " + mhz(curMax) + " MHz" });
+                if (obsMin < 999999999)
+                    freqDebugModel.append({ line: "  observed min:  " + mhz(obsMin) + " MHz" });
+                freqDebugModel.append({ line: "  observed max:  " + mhz(obsMax) + " MHz" });
+                if (obsMax > sysMax && sysMax > 0)
+                    freqDebugModel.append({ line: "  ⚠ observed exceeds sysfs max by " + mhz(obsMax - sysMax) + " MHz" });
+            }
+        }
+
+        for (var i = 0; i < 128; i++) {
+            (function(idx) {
+                readSysVal("file:///sys/devices/system/cpu/cpu" + idx + "/cpufreq/cpuinfo_max_freq",
+                    function(val) { if (val > 0) { if (!data[idx]) data[idx] = {}; data[idx].sysMaxKhz = val; } done(); });
+                readSysVal("file:///sys/devices/system/cpu/cpu" + idx + "/cpufreq/scaling_cur_freq",
+                    function(val) { if (val > 0) { if (!data[idx]) data[idx] = {}; data[idx].curKhz = val; } done(); });
+                readSysVal("file:///sys/devices/system/cpu/cpu" + idx + "/cpufreq/cpuinfo_min_freq",
+                    function(val) { if (val > 0) { if (!data[idx]) data[idx] = {}; data[idx].sysMinKhz = val; } done(); });
+            })(i);
+        }
+    }
+
+    function readSysVal(url, callback) {
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState === XMLHttpRequest.DONE) {
+                var v = parseInt((xhr.responseText || "").trim());
+                callback(isNaN(v) ? 0 : v);
+            }
+        };
+        try { xhr.open("GET", url); xhr.send(); }
+        catch(e) { callback(0); }
+    }
+
     Component.onCompleted: {
         var xhr = new XMLHttpRequest();
         xhr.onreadystatechange = function() {
@@ -272,7 +378,7 @@ Item {
         }
 
         QQC2.Label {
-            text: "System Monitor Lanes v1.0.0"
+            text: "System Monitor Lanes v1.2.5"
             font.bold: true
         }
         QQC2.Label {
@@ -287,6 +393,38 @@ Item {
                 cursorShape: parent.hoveredLink ? Qt.PointingHandCursor : Qt.ArrowCursor
                 acceptedButtons: Qt.NoButton
             }
+        }
+
+        // ── Live Frequency Debug ──────────────────────────
+        Kirigami.Separator {
+            Kirigami.FormData.isSection: true
+            Kirigami.FormData.label: i18n("Live Core Frequency Ranges")
+        }
+
+        QQC2.Label {
+            text: page.xhrChecked && !page.xhrOk
+                ? "Requires QML_XHR_ALLOW_FILE_READ=1"
+                : freqDebugModel.count === 0 ? "Scanning…" : ""
+            visible: (page.xhrChecked && !page.xhrOk) || freqDebugModel.count === 0
+            font.italic: true; opacity: 0.6
+        }
+
+        Repeater {
+            model: ListModel { id: freqDebugModel }
+            delegate: QQC2.Label {
+                text: model.line
+                font.pixelSize: 11
+                font.family: "monospace"
+                opacity: 0.8
+            }
+        }
+
+        // Timer to poll live frequencies from /sys
+        Timer {
+            id: freqDebugTimer
+            interval: 1500; running: page.xhrChecked && page.xhrOk; repeat: true
+            triggeredOnStart: true
+            onTriggered: page.refreshFreqDebug()
         }
     }
     } // end Flickable

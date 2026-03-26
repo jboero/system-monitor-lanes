@@ -21,6 +21,7 @@ Item {
     property string coreType: "P"   // P, HT, E, LP
     property real weight: 1.0
     property bool sysReadFailed: false
+    property bool freqWeighted: true // from config: scale usage by curFreq/maxFreq
     property real maxFreqKhz: 0    // from /sys cpuinfo_max_freq (in kHz)
     property int coreNum: 0       // primary CPU index for this physical core
     property bool isHT: false     // true if this is a hyperthread sibling
@@ -73,10 +74,9 @@ Item {
     }
 
     // -- Effective max frequency (MHz) for freq-weighted usage -----
-    // Prefer sysfs cpuinfo_max_freq; fall back to peak observed sensor freq.
+    // Use only the static sysfs cpuinfo_max_freq as the authoritative max.
     readonly property real effectiveMaxMhz: {
         if (maxFreqKhz > 0) return maxFreqKhz / 1000;
-        if (maxFreq > 0) return maxFreq;
         return 0;
     }
 
@@ -111,11 +111,11 @@ Item {
 
             var rawUsage = lane.lastRawValue;
 
-            // Frequency-weighted usage: scale by curFreq / maxFreq
+            // Frequency-weighted usage: scale by curFreq / maxFreq, capped at 1.0
             var effectiveUsage = rawUsage;
             var maxMhz = lane.effectiveMaxMhz;
-            if (cpuMode && curFreq > 0 && maxMhz > 0) {
-                effectiveUsage = rawUsage * (curFreq / maxMhz);
+            if (lane.freqWeighted && cpuMode && curFreq > 0 && maxMhz > 0) {
+                effectiveUsage = rawUsage * Math.min(1.0, curFreq / maxMhz);
             }
 
             lane.displayValue = effectiveUsage.toFixed(1) + "%";
