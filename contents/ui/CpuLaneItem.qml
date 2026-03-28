@@ -77,6 +77,7 @@ Item {
     // Use only the static sysfs cpuinfo_max_freq as the authoritative max.
     readonly property real effectiveMaxMhz: {
         if (maxFreqKhz > 0) return maxFreqKhz / 1000;
+        if (maxFreq > 0) return maxFreq;  // fallback to peak observed frequency
         return 0;
     }
 

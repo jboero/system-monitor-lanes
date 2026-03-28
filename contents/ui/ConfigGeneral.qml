@@ -378,7 +378,7 @@ Item {
         }
 
         QQC2.Label {
-            text: "System Monitor Lanes v1.2.5"
+            text: "System Monitor Lanes v1.3.0"
             font.bold: true
         }
         QQC2.Label {
