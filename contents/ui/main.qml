@@ -14,6 +14,8 @@ PlasmoidItem {
     readonly property bool showValues: Plasmoid.configuration.showValues !== false
     readonly property bool showFreqLine: Plasmoid.configuration.showFreqLine === true
     readonly property bool freqWeighted: Plasmoid.configuration.freqWeightedUsage !== false
+    readonly property bool combineThreads: Plasmoid.configuration.combineThreads === true
+    readonly property bool capUtilization: Plasmoid.configuration.capUtilization !== false
     readonly property string customTitle: Plasmoid.configuration.title || ""
     readonly property int maxSamples: Math.max(2, historySeconds)
 
@@ -205,6 +207,11 @@ PlasmoidItem {
         var tw = 0;
         var currentSocket = -1;
         var currentType = "";
+        // Sequential physical-core number for display labels. Raw CPU indices
+        // (grp.primary) are sparse once HT siblings are folded in — e.g.
+        // 0,1,3,6,8,10 — so we renumber cores 0,1,2,... per socket for the
+        // label only. Sensors still key off the real idx, not this ordinal.
+        var coreOrdinal = 0;
 
         for (var g = 0; g < groups.length; g++) {
             var grp = groups[g];
@@ -214,6 +221,7 @@ PlasmoidItem {
             if (grp.socket !== currentSocket) {
                 currentSocket = grp.socket;
                 currentType = "";
+                coreOrdinal = 0;  // restart core numbering for each socket
                 // Per-socket temperature lane
                 lanes.push({ mode: "temp", weight: 1.2, socket: currentSocket });
                 tw += 1.2;
@@ -231,20 +239,38 @@ PlasmoidItem {
             }
 
             var pw = weightForType(type);
-            lanes.push({
-                mode: "cpu", idx: grp.primary, coreType: type,
-                weight: pw, maxFreqKhz: grp.maxFreq,
-                coreNum: grp.primary, isHT: false, htIndex: -1
-            });
-            tw += pw;
+            var displayCore = coreOrdinal++;  // sequential label for this core
 
-            for (var t = 0; t < grp.threads.length; t++) {
+            if (root.combineThreads && grp.threads.length > 0) {
+                // Single lane per physical core, HT siblings overlaid as extra
+                // lines. Weight sums the stacked lanes' weight so the combined
+                // lane occupies the same vertical space they used to.
+                var combinedWeight = pw * (1 + grp.threads.length);
                 lanes.push({
-                    mode: "cpu", idx: grp.threads[t], coreType: "HT",
+                    mode: "cpu", idx: grp.primary, coreType: type,
+                    weight: combinedWeight, maxFreqKhz: grp.maxFreq,
+                    coreNum: displayCore, isHT: false, htIndex: -1,
+                    htCpus: grp.threads.slice()
+                });
+                tw += combinedWeight;
+            } else {
+                lanes.push({
+                    mode: "cpu", idx: grp.primary, coreType: type,
                     weight: pw, maxFreqKhz: grp.maxFreq,
-                    coreNum: grp.primary, isHT: true, htIndex: t
+                    coreNum: displayCore, isHT: false, htIndex: -1,
+                    htCpus: []
                 });
                 tw += pw;
+
+                for (var t = 0; t < grp.threads.length; t++) {
+                    lanes.push({
+                        mode: "cpu", idx: grp.threads[t], coreType: "HT",
+                        weight: pw, maxFreqKhz: grp.maxFreq,
+                        coreNum: displayCore, isHT: true, htIndex: t,
+                        htCpus: []
+                    });
+                    tw += pw;
+                }
             }
         }
 
@@ -274,6 +300,13 @@ PlasmoidItem {
     // Rebuild fallback when coreCount arrives
     onCoreCountChanged: {
         if (xhrBlocked) buildFallbackList();
+    }
+
+    // Rebuild lanes when the combine-threads option is toggled at runtime
+    onCombineThreadsChanged: {
+        if (xhrBlocked) return;  // fallback list has no topology to combine
+        if (Object.keys(root.cpuInfo).length > 0)
+            buildGroupedCpuList(root.cpuInfo, root.globalMaxFreq);
     }
 
     function coreTypeFromFreq(freq, maxGlobal) {
@@ -496,6 +529,7 @@ PlasmoidItem {
                 showValue: root.showValues
                 showFreqLine: root.showFreqLine
                 freqWeighted: root.freqWeighted
+                capAt100: root.capUtilization
                 coreCount: root.coreCount
                 totalWeight: socketTotalWeight
                 availableHeight: socketAvailHeight
@@ -504,6 +538,7 @@ PlasmoidItem {
                 coreNum: laneData ? (laneData.coreNum || 0) : 0
                 isHT: laneData ? (laneData.isHT || false) : false
                 htIndex: laneData ? (laneData.htIndex !== undefined ? laneData.htIndex : -1) : -1
+                htCpus: laneData ? (laneData.htCpus || []) : []
             }
         }
     }

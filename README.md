@@ -14,6 +14,7 @@ Replaces Plasma 6's default stacked/rainbow CPU charts with a layout that lets y
 - **Per-core sparkline lanes** — every physical core and hyperthread gets its own horizontal lane with a scrolling history graph
 - **P/E/LP core detection** — Intel hybrid CPUs (Alder Lake, Raptor Lake, Meteor Lake) show Performance, Efficiency, and Low-Power cores in labeled groups with proportional lane heights
 - **Hyperthreading awareness** — HT siblings are grouped under their physical core with distinct styling
+- **Combined core+thread graphs** *(optional)* — overlay each physical core and its hyperthread sibling(s) as a single double-line lane instead of stacking them, with cores renumbered sequentially (Core 0, 1, 2…) for readable labels
 - **Multi-socket support** — dual (or more) CPU systems display sockets as side-by-side columns, each filling the full panel height
 - **Frequency-weighted utilization** — a core running 100% busy at 2 GHz base clock shows ~55% when its turbo max is 3.6 GHz, reflecting actual compute throughput rather than scheduler busy time
 - **Turbo boost visualization** — when turbo pushes above rated max frequency, the graph scales beyond 100% with a dashed reference line at the 100% mark
@@ -87,6 +88,8 @@ Right-click the widget → **Configure**:
 | **Show labels / values** | Toggle core name labels and percentage readouts |
 | **Proportional heights** | P-cores get taller lanes than E-cores |
 | **Frequency-weighted usage** | Scale reported usage by current/max frequency ratio |
+| **Combine cores with hyperthreads** | Overlay each core and its HT sibling(s) as one double-line lane (off by default); readout sums the threads' utilization |
+| **Cap utilization at 100%** | Clamp the readout and graph ceiling to 100% (on by default); disable to see raw summed core+thread demand exceeding 100% |
 | **Temperature heatmap** | Enable per-socket temperature sparkline lane |
 | **Hot threshold** | Temperature (°C) at which the color reaches red |
 | **Colors** | Native KDE color pickers for P-core line/fill, thread line/fill, and hot color |

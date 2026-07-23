@@ -44,6 +44,12 @@
         <entry name="showFreqLine" type="Bool">
             <default>false</default>
         </entry>
+        <entry name="combineThreads" type="Bool">
+            <default>false</default>
+        </entry>
+        <entry name="capUtilization" type="Bool">
+            <default>true</default>
+        </entry>
         <entry name="title" type="String">
             <default></default>
         </entry>

@@ -24,6 +24,8 @@ Item {
     property alias cfg_freqWeightedUsage: freqWeightedCheckBox.checked
     property alias cfg_tempHeatmap: tempHeatmapCheckBox.checked
     property alias cfg_showFreqLine: showFreqLineCheckBox.checked
+    property alias cfg_combineThreads: combineThreadsCheckBox.checked
+    property alias cfg_capUtilization: capUtilCheckBox.checked
     property alias cfg_title: titleField.text
 
     // Default-value stubs (Plasma 6 sets these for reset)
@@ -40,6 +42,8 @@ Item {
     property var cfg_freqWeightedUsageDefault
     property var cfg_tempHeatmapDefault
     property var cfg_showFreqLineDefault
+    property var cfg_combineThreadsDefault
+    property var cfg_capUtilizationDefault
     property var cfg_titleDefault
 
     // -- XHR file access detection --
@@ -305,6 +309,20 @@ Item {
             QQC2.ToolTip.visible: hovered
             QQC2.ToolTip.delay: 500
         }
+        QQC2.CheckBox {
+            id: combineThreadsCheckBox
+            text: i18n("Combine cores with hyperthreads")
+            QQC2.ToolTip.text: i18n("Overlay each physical core and its hyperthread sibling(s) as a single double-line graph, instead of stacking them as separate lanes. Requires QML_XHR_ALLOW_FILE_READ=1 for topology detection.")
+            QQC2.ToolTip.visible: hovered
+            QQC2.ToolTip.delay: 500
+        }
+        QQC2.CheckBox {
+            id: capUtilCheckBox
+            text: i18n("Cap utilization at 100%")
+            QQC2.ToolTip.text: i18n("Clamp the reported utilization to 100% and hold the graph ceiling at 100%. When combining cores, the summed core+thread demand can exceed 100%; disable this to see the raw total.")
+            QQC2.ToolTip.visible: hovered
+            QQC2.ToolTip.delay: 500
+        }
         QQC2.SpinBox {
             id: hotThresholdSpinBox
             Kirigami.FormData.label: i18n("Hot threshold (\u00B0C):")
@@ -378,7 +396,7 @@ Item {
         }
 
         QQC2.Label {
-            text: "System Monitor Lanes v1.3.0"
+            text: "System Monitor Lanes v1.4.0"
             font.bold: true
         }
         QQC2.Label {

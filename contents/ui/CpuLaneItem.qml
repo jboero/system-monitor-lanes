@@ -1,4 +1,5 @@
 import QtQuick
+import QtQml
 import org.kde.plasma.components as PlasmaComponents
 import org.kde.ksysguard.sensors as Sensors
 
@@ -22,10 +23,12 @@ Item {
     property real weight: 1.0
     property bool sysReadFailed: false
     property bool freqWeighted: true // from config: scale usage by curFreq/maxFreq
+    property bool capAt100: true     // clamp reported/graphed utilization to 100%
     property real maxFreqKhz: 0    // from /sys cpuinfo_max_freq (in kHz)
     property int coreNum: 0       // primary CPU index for this physical core
     property bool isHT: false     // true if this is a hyperthread sibling
     property int htIndex: -1      // HT sibling index (0, 1, ...)
+    property var htCpus: []       // combined mode: HT sibling CPU indices to overlay
 
     property bool gotData: false
     property bool dead: false
@@ -66,6 +69,8 @@ Item {
     }
     // Parsed color object for gradient stops (Canvas needs r/g/b components)
     readonly property color fillColorObj: fillColor
+    // Overlay line color for hyperthread siblings in combined mode
+    readonly property color htLineColor: "#6a8ab8"
     readonly property real labelOpacity: {
         if (coreType === "LP") return 0.45;
         if (coreType === "HT") return 0.55;
@@ -103,6 +108,38 @@ Item {
         }
     }
 
+    // -- Hyperthread sibling tracks (combined mode) ---------------
+    // One non-visual track per HT sibling: its own sensors and history.
+    // The lane's sample timer samples these alongside the primary track.
+    Instantiator {
+        id: htTracks
+        model: lane.htCpus
+        delegate: QtObject {
+            id: track
+            required property var modelData
+            readonly property int cpuIndex: track.modelData
+            property real lastRawValue: 0
+            property real curFreq: 0
+            property real maxFreq: 0
+            property var history: []
+
+            property Sensors.Sensor usageSensor: Sensors.Sensor {
+                sensorId: "cpu/cpu" + track.cpuIndex + "/usage"
+                enabled: !lane.shouldHide
+                onValueChanged: track.lastRawValue = Number(value) || 0
+            }
+            property Sensors.Sensor freqSensor: Sensors.Sensor {
+                sensorId: "cpu/cpu" + track.cpuIndex + "/frequency"
+                enabled: !lane.shouldHide
+                onValueChanged: {
+                    var f = Number(value) || 0;
+                    track.curFreq = f;
+                    if (f > track.maxFreq) track.maxFreq = f;
+                }
+            }
+        }
+    }
+
     // -- 1-second sample timer (synchronized scroll rate) ----------
     Timer {
         id: sampleTimer
@@ -119,17 +156,45 @@ Item {
                 effectiveUsage = rawUsage * Math.min(1.0, curFreq / maxMhz);
             }
 
-            lane.displayValue = effectiveUsage.toFixed(1) + "%";
+            lane.displayValue = (lane.capAt100 ? Math.min(100, effectiveUsage) : effectiveUsage).toFixed(1) + "%";
 
             var h = lane.history.slice();
             h.push(effectiveUsage);
             if (h.length > lane.maxSamples) h.splice(0, h.length - lane.maxSamples);
             lane.history = h;
 
+            // Combined mode: sample each hyperthread sibling track too, and
+            // report the sum of all threads as the lane's value. Both threads
+            // belong to one physical core, so summing captures total demand on
+            // it (e.g. 100% + 20% = 120%); reaches ~200% when fully saturated.
+            if (lane.htCpus.length > 0) {
+                var sumUsage = effectiveUsage;
+                for (var ti = 0; ti < htTracks.count; ti++) {
+                    var tr = htTracks.objectAt(ti);
+                    if (!tr) continue;
+                    var trEff = tr.lastRawValue;
+                    if (lane.freqWeighted && tr.curFreq > 0 && maxMhz > 0)
+                        trEff = tr.lastRawValue * Math.min(1.0, tr.curFreq / maxMhz);
+                    var th = tr.history.slice();
+                    th.push(trEff);
+                    if (th.length > lane.maxSamples) th.splice(0, th.length - lane.maxSamples);
+                    tr.history = th;
+                    sumUsage += trEff;
+                }
+                lane.displayValue = (lane.capAt100 ? Math.min(100, sumUsage) : sumUsage).toFixed(1) + "%";
+            }
+
             // Track peak across current history window
             if (cpuMode) {
                 var peak = 100;  // minimum ceiling is always 100%
                 for (var i = 0; i < h.length; i++) if (h[i] > peak) peak = h[i];
+                // Include HT sibling histories so the shared Y scale fits both
+                for (var pt = 0; pt < htTracks.count; pt++) {
+                    var ptr = htTracks.objectAt(pt);
+                    if (!ptr || !ptr.history) continue;
+                    var ph = ptr.history;
+                    for (var pi = 0; pi < ph.length; pi++) if (ph[pi] > peak) peak = ph[pi];
+                }
                 lane.historyPeak = peak;
             } else if (lane.maxValue < 0) {
                 var peak2 = 1;
@@ -174,9 +239,10 @@ Item {
         if (m<=1) return b; if (m<=2) return 2*b; if (m<=5) return 5*b; return 10*b;
     }
 
-    // For CPU mode: minimum 100, but expands with 5% headroom if turbo pushes above
+    // For CPU mode: minimum 100, but expands with 5% headroom if turbo pushes
+    // above — unless capped at 100% by config.
     readonly property real effectiveMax: {
-        if (cpuMode) return Math.max(100, historyPeak * 1.05);
+        if (cpuMode) return capAt100 ? 100 : Math.max(100, historyPeak * 1.05);
         return maxValue > 0 ? maxValue : observedMax;
     }
 
@@ -262,6 +328,26 @@ Item {
             ctx.lineWidth = (coreType === "P") ? 1.2 : 0.8;
             ctx.lineJoin = "round"; ctx.stroke();
 
+            // -- Hyperthread sibling overlay lines (combined mode) --
+            if (lane.htCpus.length > 0) {
+                for (var t = 0; t < htTracks.count; t++) {
+                    var tr = htTracks.objectAt(t);
+                    if (!tr || !tr.history || tr.history.length < 2) continue;
+                    var thist = tr.history;
+                    var tOx = (samples - thist.length) * dx;
+                    ctx.beginPath();
+                    for (var q = 0; q < thist.length; q++) {
+                        var qx = tOx + q * dx;
+                        var qy = h - (thist[q] / eMax) * (h - 1);
+                        qy = Math.max(0, qy);
+                        if (q === 0) ctx.moveTo(qx, qy); else ctx.lineTo(qx, qy);
+                    }
+                    ctx.strokeStyle = lane.htLineColor;
+                    ctx.lineWidth = 0.9;
+                    ctx.lineJoin = "round"; ctx.stroke();
+                }
+            }
+
             // -- Frequency line (subtle gray, percentage of max) --
             var fHist = lane.freqHistory;
             if (lane.showFreqLine && cpuMode && fHist.length >= 2) {
@@ -295,6 +381,7 @@ Item {
             if (!cpuMode) return lane.label;
             var name = isHT ? ("  HT" + (htIndex >= 0 ? htIndex : ""))
                             : ("Core" + lane.coreNum);
+            if (!isHT && lane.htCpus.length > 0) name += "+HT";
             // Append current frequency when available
             if (cpuMode && lane.curFreq > 0) {
                 var ghz = (lane.curFreq / 1000).toFixed(1);
