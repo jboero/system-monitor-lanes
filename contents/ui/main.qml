@@ -32,6 +32,9 @@ PlasmoidItem {
     property var cpuInfo: ({})
     property var coreGroups: ([])
     property int socketCount: 1
+    // Map of logical CPU index -> online (bool). Polled from /sys so lanes can
+    // render an offline state when cores are taken offline at runtime.
+    property var cpuOnline: ({})
 
     Sensors.Sensor {
         sensorId: "cpu/all/coreCount"
@@ -56,14 +59,82 @@ PlasmoidItem {
         }
     }
 
+    // Poll CPU online status so lanes can show cores taken offline at runtime.
+    Timer {
+        id: onlineTimer
+        interval: 2000; repeat: true
+        running: !root.xhrBlocked && root.laneDefinitions.length > 0
+        triggeredOnStart: true
+        onTriggered: root.pollOnlineStatus()
+    }
+
+    // Read /sys/devices/system/cpu/cpuN/online for every CPU that appears in a
+    // lane. cpu0 (and CPUs that can't be offlined) expose no 'online' file, so
+    // an empty response is treated as online.
+    function pollOnlineStatus() {
+        if (root.xhrBlocked) return;
+        var lanes = root.laneDefinitions;
+        var idxs = [];
+        var seen = {};
+        for (var i = 0; i < lanes.length; i++) {
+            var ld = lanes[i];
+            if (ld.mode !== "cpu") continue;
+            if (seen[ld.idx] === undefined) { seen[ld.idx] = true; idxs.push(ld.idx); }
+            if (ld.htCpus) {
+                for (var j = 0; j < ld.htCpus.length; j++) {
+                    var hc = ld.htCpus[j];
+                    if (seen[hc] === undefined) { seen[hc] = true; idxs.push(hc); }
+                }
+            }
+        }
+        if (idxs.length === 0) return;
+
+        var pending = idxs.length;
+        var result = {};
+
+        function finishOnline() {
+            var prev = root.cpuOnline;
+            var cameOnline = false;
+            for (var ci2 in result) {
+                if (result[ci2] === true && prev[ci2] === false) { cameOnline = true; break; }
+            }
+            root.cpuOnline = result;
+            // A core came back online: its topology reappears, so re-scan and
+            // rebuild to turn the offline placeholder into a real grouped lane.
+            if (cameOnline) root.readSysData();
+        }
+
+        for (var k = 0; k < idxs.length; k++) {
+            (function(ci) {
+                var xhr = new XMLHttpRequest();
+                xhr.onreadystatechange = function() {
+                    if (xhr.readyState === XMLHttpRequest.DONE) {
+                        var txt = (xhr.responseText || "").trim();
+                        result[ci] = (txt === "") ? true : (txt.charAt(0) === "1");
+                        pending--;
+                        if (pending <= 0) finishOnline();
+                    }
+                };
+                try {
+                    xhr.open("GET", "file:///sys/devices/system/cpu/cpu" + ci + "/online");
+                    xhr.send();
+                } catch(e) {
+                    result[ci] = true;
+                    pending--;
+                    if (pending <= 0) root.cpuOnline = result;
+                }
+            })(idxs[k]);
+        }
+    }
+
     Component.onCompleted: readSysData()
 
     // -- Read /sys: topology, package_id, and optionally cpuinfo_max_freq
     function readSysData() {
         var info = {};
         var maxGlobal = 0;
-        // 3 reads per CPU: siblings, package_id, max_freq
-        var pending = 128 * 3;
+        // 4 reads per CPU: siblings, package_id, max_freq, online
+        var pending = 128 * 4;
         var xhrWorked = false;
         var finalized = false;
 
@@ -106,6 +177,16 @@ PlasmoidItem {
                                 info[idx].maxFreqKhz = freq;
                                 if (freq > maxGlobal) maxGlobal = freq;
                             }
+                        }
+                    });
+
+                // 4. Online flag — present but offline CPUs read "0" here while
+                //    their topology/ dir is gone, so this is how we spot them.
+                sysRead("file:///sys/devices/system/cpu/cpu" + idx + "/online",
+                    function(text) {
+                        if (text !== "") {
+                            if (!info[idx]) info[idx] = {};
+                            info[idx].online = (text.charAt(0) === "1");
                         }
                     });
             })(i);
@@ -154,11 +235,21 @@ PlasmoidItem {
             }
             root.socketCount = Math.max(1, Object.keys(sockets).length);
 
-            buildGroupedCpuList(info, maxGlobal);
+            // Present-but-offline CPUs: online flag is false and topology is
+            // gone (no primaryCpu). These become dimmed "offline" placeholders.
+            var offlineCpus = [];
+            for (var oi in info) {
+                if (info[oi].primaryCpu === undefined && info[oi].online === false)
+                    offlineCpus.push(parseInt(oi));
+            }
+            offlineCpus.sort(function(a, b){ return a - b; });
+
+            buildGroupedCpuList(info, maxGlobal, offlineCpus);
         }
     }
 
-    function buildGroupedCpuList(info, maxGlobal) {
+    function buildGroupedCpuList(info, maxGlobal, offlineCpus) {
+        offlineCpus = offlineCpus || [];
         var groupMap = {};
         var cpuIndices = [];
 
@@ -193,14 +284,45 @@ PlasmoidItem {
         var groups = [];
         for (var p in groupMap) groups.push(groupMap[p]);
 
-        // Sort by socket, then by core type (P > E > LP), then by index
-        groups.sort(function(a, b) {
+        var order = { "P": 0, "E": 1, "LP": 2 };
+
+        // Index-range classifier for offline placeholders. Offline CPUs have no
+        // topology, so we guess their type from where their index falls: pick
+        // the type whose online cores start at the highest index still <= it.
+        // On Intel hybrid, P threads precede E precede LP by index.
+        var typeMinIdx = {};
+        for (var gg = 0; gg < groups.length; gg++) {
+            var gt = coreTypeFromFreq(groups[gg].maxFreq, maxGlobal);
+            if (typeMinIdx[gt] === undefined || groups[gg].primary < typeMinIdx[gt])
+                typeMinIdx[gt] = groups[gg].primary;
+        }
+        function classifyOffline(oi) {
+            var best = "P", bestMin = -1;
+            for (var tk in typeMinIdx) {
+                if (typeMinIdx[tk] <= oi && typeMinIdx[tk] > bestMin) {
+                    bestMin = typeMinIdx[tk]; best = tk;
+                }
+            }
+            return best;
+        }
+
+        // Unified, sorted list of renderable entries: real core groups plus
+        // offline placeholders, ordered by socket, then type, then index.
+        var entries = [];
+        for (var gi = 0; gi < groups.length; gi++) {
+            entries.push({ kind: "core", socket: groups[gi].socket,
+                type: coreTypeFromFreq(groups[gi].maxFreq, maxGlobal),
+                sortIdx: groups[gi].primary, grp: groups[gi] });
+        }
+        for (var oj = 0; oj < offlineCpus.length; oj++) {
+            entries.push({ kind: "off", socket: 0,
+                type: classifyOffline(offlineCpus[oj]),
+                sortIdx: offlineCpus[oj], cpu: offlineCpus[oj] });
+        }
+        entries.sort(function(a, b) {
             if (a.socket !== b.socket) return a.socket - b.socket;
-            var typeA = coreTypeFromFreq(a.maxFreq, maxGlobal);
-            var typeB = coreTypeFromFreq(b.maxFreq, maxGlobal);
-            var order = { "P": 0, "E": 1, "LP": 2 };
-            if (order[typeA] !== order[typeB]) return order[typeA] - order[typeB];
-            return a.primary - b.primary;
+            if (order[a.type] !== order[b.type]) return order[a.type] - order[b.type];
+            return a.sortIdx - b.sortIdx;
         });
 
         var lanes = [];
@@ -213,13 +335,13 @@ PlasmoidItem {
         // label only. Sensors still key off the real idx, not this ordinal.
         var coreOrdinal = 0;
 
-        for (var g = 0; g < groups.length; g++) {
-            var grp = groups[g];
-            var type = coreTypeFromFreq(grp.maxFreq, maxGlobal);
+        for (var e = 0; e < entries.length; e++) {
+            var ent = entries[e];
+            var type = ent.type;
 
             // Socket header
-            if (grp.socket !== currentSocket) {
-                currentSocket = grp.socket;
+            if (ent.socket !== currentSocket) {
+                currentSocket = ent.socket;
                 currentType = "";
                 coreOrdinal = 0;  // restart core numbering for each socket
                 // Per-socket temperature lane
@@ -239,6 +361,22 @@ PlasmoidItem {
             }
 
             var pw = weightForType(type);
+
+            if (ent.kind === "off") {
+                // Offline placeholder: labeled by raw cpuN (its physical core
+                // and siblings are unknown while offline). Renders dimmed once
+                // the online poll marks it offline in cpuOnline.
+                lanes.push({
+                    mode: "cpu", idx: ent.cpu, coreType: type,
+                    weight: pw, maxFreqKhz: 0,
+                    coreNum: ent.cpu, isHT: false, htIndex: -1,
+                    htCpus: [], offlinePlaceholder: true
+                });
+                tw += pw;
+                continue;
+            }
+
+            var grp = ent.grp;
             var displayCore = coreOrdinal++;  // sequential label for this core
 
             if (root.combineThreads && grp.threads.length > 0) {
@@ -530,6 +668,7 @@ PlasmoidItem {
                 showFreqLine: root.showFreqLine
                 freqWeighted: root.freqWeighted
                 capAt100: root.capUtilization
+                cpuOnline: root.cpuOnline
                 coreCount: root.coreCount
                 totalWeight: socketTotalWeight
                 availableHeight: socketAvailHeight
@@ -539,6 +678,7 @@ PlasmoidItem {
                 isHT: laneData ? (laneData.isHT || false) : false
                 htIndex: laneData ? (laneData.htIndex !== undefined ? laneData.htIndex : -1) : -1
                 htCpus: laneData ? (laneData.htCpus || []) : []
+                offlinePlaceholder: laneData ? (laneData.offlinePlaceholder || false) : false
             }
         }
     }

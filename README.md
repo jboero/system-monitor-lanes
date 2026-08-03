@@ -16,6 +16,7 @@ Replaces Plasma 6's default stacked/rainbow CPU charts with a layout that lets y
 - **Hyperthreading awareness** — HT siblings are grouped under their physical core with distinct styling
 - **Combined core+thread graphs** *(optional)* — overlay each physical core and its hyperthread sibling(s) as a single double-line lane instead of stacking them, with cores renumbered sequentially (Core 0, 1, 2…) for readable labels
 - **Multi-socket support** — dual (or more) CPU systems display sockets as side-by-side columns, each filling the full panel height
+- **Offline-core awareness** — cores taken offline (`/sys/.../cpuN/online` = 0, e.g. to save battery) are shown dimmed and labeled "offline" with the graph broken at a gap, instead of freezing at their last value. Cores already offline at startup appear as `cpuN` placeholders and snap back into their proper group when brought online again
 - **Frequency-weighted utilization** — a core running 100% busy at 2 GHz base clock shows ~55% when its turbo max is 3.6 GHz, reflecting actual compute throughput rather than scheduler busy time
 - **Turbo boost visualization** — when turbo pushes above rated max frequency, the graph scales beyond 100% with a dashed reference line at the 100% mark
 - **Temperature sparkline** — per-socket temperature lane with blue→green→red color gradient responding to current temperature

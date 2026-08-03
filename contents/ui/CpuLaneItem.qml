@@ -24,11 +24,33 @@ Item {
     property bool sysReadFailed: false
     property bool freqWeighted: true // from config: scale usage by curFreq/maxFreq
     property bool capAt100: true     // clamp reported/graphed utilization to 100%
+    property var cpuOnline: ({})      // map cpuIndex -> online bool (from main.qml)
+
+    // Online state of this lane's primary CPU. Unknown index => assume online.
+    readonly property bool primaryOnline: {
+        if (!cpuMode) return true;
+        if (offlinePlaceholder) return false;  // known offline, show it at once
+        var o = lane.cpuOnline[cpuIndex];
+        return o === undefined ? true : o;
+    }
+    function cpuIsOnline(idx) {
+        var o = lane.cpuOnline[idx];
+        return o === undefined ? true : o;
+    }
+    // Append a gap (NaN) sample so a frozen tail scrolls out rather than
+    // drawing a misleading flat line while a core is offline.
+    function pushGap(arr) {
+        var a = arr.slice();
+        a.push(NaN);
+        if (a.length > maxSamples) a.splice(0, a.length - maxSamples);
+        return a;
+    }
     property real maxFreqKhz: 0    // from /sys cpuinfo_max_freq (in kHz)
     property int coreNum: 0       // primary CPU index for this physical core
     property bool isHT: false     // true if this is a hyperthread sibling
     property int htIndex: -1      // HT sibling index (0, 1, ...)
     property var htCpus: []       // combined mode: HT sibling CPU indices to overlay
+    property bool offlinePlaceholder: false  // core offline at startup (no topology)
 
     property bool gotData: false
     property bool dead: false
@@ -46,6 +68,7 @@ Item {
     property string displayValue: ""
 
     readonly property bool shouldHide: {
+        if (offlinePlaceholder) return false;  // present-but-offline: always show
         if (cpuMode && coreCount > 0) return cpuIndex >= coreCount;
         return dead;
     }
@@ -53,6 +76,10 @@ Item {
     // -- Height: proportional share of available space ------------
     height: shouldHide ? 0 : Math.max(8, availableHeight * weight / Math.max(1, totalWeight))
     clip: true
+
+    // Dim the whole lane while its core is offline
+    opacity: (cpuMode && !primaryOnline) ? 0.4 : 1.0
+    Behavior on opacity { NumberAnimation { duration: 250 } }
 
     // -- Colors per core type -------------------------------------
     readonly property color lineColor: {
@@ -145,6 +172,23 @@ Item {
         id: sampleTimer
         interval: 1000; running: !shouldHide; repeat: true
         onTriggered: {
+            // Core offline (/sys .../online = 0): the sensor stops updating, so
+            // instead of repeating the last value (a misleading flat line) push
+            // a gap into every series and flag it offline. Checked before the
+            // gotData guard so cores already offline at startup show too.
+            if (cpuMode && !lane.primaryOnline) {
+                lane.displayValue = "offline";
+                lane.history = lane.pushGap(lane.history);
+                for (var oi = 0; oi < htTracks.count; oi++) {
+                    var otr = htTracks.objectAt(oi);
+                    if (otr) otr.history = lane.pushGap(otr.history);
+                }
+                if (lane.showFreqLine)
+                    lane.freqHistory = lane.pushGap(lane.freqHistory);
+                spark.requestPaint();
+                return;
+            }
+
             if (!lane.gotData) return;  // wait for first sensor value
 
             var rawUsage = lane.lastRawValue;
@@ -172,6 +216,11 @@ Item {
                 for (var ti = 0; ti < htTracks.count; ti++) {
                     var tr = htTracks.objectAt(ti);
                     if (!tr) continue;
+                    if (!lane.cpuIsOnline(tr.cpuIndex)) {
+                        // Sibling offline: gap it and leave it out of the sum
+                        tr.history = lane.pushGap(tr.history);
+                        continue;
+                    }
                     var trEff = tr.lastRawValue;
                     if (lane.freqWeighted && tr.curFreq > 0 && maxMhz > 0)
                         trEff = tr.lastRawValue * Math.min(1.0, tr.curFreq / maxMhz);
@@ -300,33 +349,65 @@ Item {
                 ctx.globalAlpha = 1.0;
             }
 
-            // -- Fill area under curve with gradient (opaque at line, transparent at bottom) --
-            ctx.beginPath(); ctx.moveTo(ox, h);
-            for (var i = 0; i < hist.length; i++) {
-                var fy = h - (hist[i] / eMax) * (h - 1);
-                ctx.lineTo(ox + i * dx, Math.max(0, fy));
+            // Gap-aware drawing: NaN samples (cores offline) split a series into
+            // contiguous runs so the line breaks at the gap instead of bridging
+            // across it or freezing at the last value.
+            function seriesRuns(arr) {
+                var runs = [], cur = null;
+                for (var s = 0; s < arr.length; s++) {
+                    var v = arr[s];
+                    if (v === null || v === undefined || isNaN(v)) {
+                        if (cur) { runs.push(cur); cur = null; }
+                    } else {
+                        if (!cur) cur = [];
+                        cur.push(s);
+                    }
+                }
+                if (cur) runs.push(cur);
+                return runs;
             }
-            ctx.lineTo(ox + (hist.length - 1) * dx, h); ctx.closePath();
+            function yFor(v) { return Math.max(0, h - (v / eMax) * (h - 1)); }
+            function strokeSeries(arr, aox, color, width, alpha) {
+                var runs = seriesRuns(arr);
+                ctx.globalAlpha = (alpha === undefined) ? 1.0 : alpha;
+                for (var r = 0; r < runs.length; r++) {
+                    var idl = runs[r];
+                    if (idl.length < 2) continue;
+                    ctx.beginPath();
+                    for (var m = 0; m < idl.length; m++) {
+                        var xx = aox + idl[m] * dx, yy = yFor(arr[idl[m]]);
+                        if (m === 0) ctx.moveTo(xx, yy); else ctx.lineTo(xx, yy);
+                    }
+                    ctx.strokeStyle = color; ctx.lineWidth = width;
+                    ctx.lineJoin = "round"; ctx.stroke();
+                }
+                ctx.globalAlpha = 1.0;
+            }
+
+            // -- Gradient shared by all fill runs --
             var grad = ctx.createLinearGradient(0, 0, 0, h);
             var baseAlpha = (coreType === "P") ? 0.45 : 0.35;
             grad.addColorStop(0, Qt.rgba(
                 lane.fillColorObj.r, lane.fillColorObj.g, lane.fillColorObj.b, baseAlpha));
             grad.addColorStop(1, Qt.rgba(
                 lane.fillColorObj.r, lane.fillColorObj.g, lane.fillColorObj.b, 0.0));
-            ctx.fillStyle = grad;
-            ctx.fill();
 
-            // -- Stroke line --
-            ctx.beginPath();
-            for (var j = 0; j < hist.length; j++) {
-                var px = ox + j * dx;
-                var py = h - (hist[j] / eMax) * (h - 1);
-                py = Math.max(0, py);
-                if (j === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+            // -- Fill area under the primary curve (per contiguous run) --
+            var pRuns = seriesRuns(hist);
+            for (var pr = 0; pr < pRuns.length; pr++) {
+                var pIdl = pRuns[pr];
+                if (pIdl.length < 2) continue;
+                ctx.beginPath();
+                ctx.moveTo(ox + pIdl[0] * dx, h);
+                for (var pa = 0; pa < pIdl.length; pa++)
+                    ctx.lineTo(ox + pIdl[pa] * dx, yFor(hist[pIdl[pa]]));
+                ctx.lineTo(ox + pIdl[pIdl.length - 1] * dx, h);
+                ctx.closePath();
+                ctx.fillStyle = grad; ctx.fill();
             }
-            ctx.strokeStyle = lane.lineColor;
-            ctx.lineWidth = (coreType === "P") ? 1.2 : 0.8;
-            ctx.lineJoin = "round"; ctx.stroke();
+
+            // -- Stroke the primary line --
+            strokeSeries(hist, ox, lane.lineColor, (coreType === "P") ? 1.2 : 0.8);
 
             // -- Hyperthread sibling overlay lines (combined mode) --
             if (lane.htCpus.length > 0) {
@@ -334,37 +415,15 @@ Item {
                     var tr = htTracks.objectAt(t);
                     if (!tr || !tr.history || tr.history.length < 2) continue;
                     var thist = tr.history;
-                    var tOx = (samples - thist.length) * dx;
-                    ctx.beginPath();
-                    for (var q = 0; q < thist.length; q++) {
-                        var qx = tOx + q * dx;
-                        var qy = h - (thist[q] / eMax) * (h - 1);
-                        qy = Math.max(0, qy);
-                        if (q === 0) ctx.moveTo(qx, qy); else ctx.lineTo(qx, qy);
-                    }
-                    ctx.strokeStyle = lane.htLineColor;
-                    ctx.lineWidth = 0.9;
-                    ctx.lineJoin = "round"; ctx.stroke();
+                    strokeSeries(thist, (samples - thist.length) * dx,
+                                 lane.htLineColor, 0.9);
                 }
             }
 
             // -- Frequency line (subtle gray, percentage of max) --
             var fHist = lane.freqHistory;
             if (lane.showFreqLine && cpuMode && fHist.length >= 2) {
-                var fOx = (samples - fHist.length) * dx;
-                ctx.beginPath();
-                for (var f = 0; f < fHist.length; f++) {
-                    var fpx = fOx + f * dx;
-                    // freqHistory is 0-100% of max freq; map to same Y scale as usage
-                    var fpy = h - (fHist[f] / eMax) * (h - 1);
-                    fpy = Math.max(0, fpy);
-                    if (f === 0) ctx.moveTo(fpx, fpy); else ctx.lineTo(fpx, fpy);
-                }
-                ctx.strokeStyle = "#888888";
-                ctx.globalAlpha = 0.4;
-                ctx.lineWidth = 0.8;
-                ctx.lineJoin = "round"; ctx.stroke();
-                ctx.globalAlpha = 1.0;
+                strokeSeries(fHist, (samples - fHist.length) * dx, "#888888", 0.8, 0.4);
             }
         }
     }
@@ -379,11 +438,14 @@ Item {
         z: 2
         text: {
             if (!cpuMode) return lane.label;
+            // Offline-at-startup placeholder: label by raw cpuN, since its
+            // physical core number and siblings are unknown while offline.
+            if (lane.offlinePlaceholder) return "cpu" + lane.cpuIndex;
             var name = isHT ? ("  HT" + (htIndex >= 0 ? htIndex : ""))
                             : ("Core" + lane.coreNum);
             if (!isHT && lane.htCpus.length > 0) name += "+HT";
-            // Append current frequency when available
-            if (cpuMode && lane.curFreq > 0) {
+            // Append current frequency when available (not while offline — stale)
+            if (cpuMode && lane.curFreq > 0 && lane.primaryOnline) {
                 var ghz = (lane.curFreq / 1000).toFixed(1);
                 name += " " + ghz + "GHz";
             }
